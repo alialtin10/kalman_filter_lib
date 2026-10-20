@@ -6,11 +6,19 @@
 namespace kfl{ //kalman_filter_lib
 
 /**
+ * @brief Derleme zamanında boyutlandırılmış genel Eigen matris tipi.
+ * @tparam Rows Satır sayısı
+ * @tparam Cols Sütun sayısı
+ */
+template <int Rows, int Cols>
+using Matrix = Eigen::Matrix<double,Rows,Cols>;
+
+/**
  * @brief Eigen matrix types that are dimensioned (statically) at compile time.
  * @tparam Dim State vector size
  */
 template <int Dim>
-using StateVector = Eigen::Matrix<double,Dim,1>; 
+using StateVector = Eigen::Matrix<double,Dim,1>;
 
 template <int Dim>
 using StateCovariance = Eigen::Matrix<double,Dim,Dim>;

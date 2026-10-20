@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 
 #include "../core/filter_base.hpp"
 #include<Eigen/Dense>
@@ -6,17 +6,23 @@
 namespace kfl
 {
     /**
-     * @brief Standart Kalman Filtresi (Standart Sistemler için)
+     * @brief Standart (doğrusal) Kalman Filtresi
+     *
+     * x_k = F*x_{k-1} + B*u_k + w,   w ~ N(0,Q)
+     * z_k = H*x_k + v,               v ~ N(0,R)
+     *
+     * @tparam StateDim Durum boyutu
+     * @tparam MeasDim  Ölçüm boyutu
+     * @tparam CtrlDim  Kontrol girdisi boyutu (0: kontrol girdisi yok)
      */
     template <int StateDim, int MeasDim, int CtrlDim =0>
-    class KalmanFilter : public FilterBase<StateDim,MeasDim,CtrlDim>
+    class KalmanFilter : public FilterBase<StateDim>
     {
         public:
-            // Üst  Sınıf x_ ve P_ üyerlerini doğrudan kullanabilmek için
-            using Base = FilterBase<StateDim,MeasDim,CtrlDim>
+            // Üst  Sınıf x_ ve P_ üyelerini doğrudan kullanabilmek için
+            using Base = FilterBase<StateDim>;
             using Base::x_;
             using Base::P_;
-            using Base::is_initialized_;
 
             // ilgili matris tiplerini tanımlayalım
             using StateMatrix = Eigen::Matrix<double,StateDim,StateDim>;
@@ -29,7 +35,8 @@ namespace kfl
 
             // --- Functions ---
             /**
-             *@brief Sistemin matrislerini ayarlar (F,B,H,Q,R) 
+             *@brief Sistemin matrislerini ayarlar (F,B,H,Q,R).
+             * dt değişkense her predict() öncesinde yeniden çağrılabilir.
              */
             void setSystemMatrices( const StateMatrix& F,
                                     const StateMatrix& Q,
@@ -42,64 +49,58 @@ namespace kfl
                 H_ = H;
                 R_ = R;
                 B_ = B;
-                // Identity matrisini önceden hesaplayıp saklamak performansı artırır
-                I_ = StateMatrix::Identity();
+                has_model_ = true;
             }
-            
+
             // Tahmin Adımı
-            void predict() override
+            void predict()
             {
                 // Kontrol girdisi olmadan tahmin
-                ControlVector<CtrlDim> u = ControlVector<CtrlDim>::Zero();
-                predict(u);
+                predict(ControlVector<CtrlDim>::Zero());
             }
-            
-            void predict(const ControlVector<CtrlDim>& u) override
+
+            void predict(const ControlVector<CtrlDim>& u)
             {
-                if(!is_initialized_) return;
-                
+                requireReady();
+
                 // x = F*x + B*u
                 x_ = F_ * x_ + B_ * u;
 
                 // P = F*P*F^T + Q
-                P_ = F_*P_ * F_.transpose() + Q_;
+                P_ = utils::symmetrize(F_ * P_ * F_.transpose() + Q_);
             }
-            
-            // Güncelleme Adımı
-            void update(const MeasurementVector<MeasDim>& z) override
+
+            /**
+             * @brief Güncelleme Adımı - Durumu sensör verisiyle düzeltir.
+             * @param z sensör ölçüm vektörü
+             * @param nis_gate NIS eşiği; aşılırsa ölçüm aykırı değer sayılıp reddedilir
+             * @return Ölçüm kabul edildiyse true
+             */
+            bool update(const MeasurementVector<MeasDim>& z, double nis_gate = Base::kNoGate)
             {
-                if(!is_initialized_) return;
-                
-                // y = z - H*x 
-                MeasurementVector<MeasDim> y = z - H_ * x_;
+                requireReady();
 
-                // S = H*P*H^T +R
-                MeasurementCovarianceMatrix S = H_ * P_ * H_.transpose() + R_;
-
-                // K = P*H^T*S^-1 (Kalman Gain)
-                // Modern C++ ve Eigen ile ters alma işlemi S.inverse() ile yapılır.
-                // LLT (Cholesky) veya LU ayrıştırması daha hızlı ve güvenlidir, ancak S küçükse inverse() yeterlidir.
-                Eigen::Matrix<double,StateDim,MeasDim> K = P_ * H_.transpose() * S.inverse();
-                
-                // x = x + K*y
-                x_ = x_ + K*y;
-
-                // P = (I - K*H)*P
-                // Joseph Formu sayısal stabilite için daha iyidir: P = (I - K*H)*P*(I - K*H)^T + K*R*K^T
-                // Ancak standart form daha hızlıdır. Şimdilik standart formu kullanıyoruz.
-                P_ = (I_ - K * H_) * P_;
+                // y = z - H*x
+                const MeasurementVector<MeasDim> y = z - H_ * x_;
+                return this->josephUpdate(y, H_, R_, nis_gate);
             }
 
         private:
+            void requireReady() const
+            {
+                this->requireInitialized();
+                if (!has_model_)
+                    throw std::logic_error("kfl: setSystemMatrices() çağrılmadan KalmanFilter kullanıldı");
+            }
+
             StateMatrix F_; //Sistem / Durum Geçiş Matriksi
             ControlMatrix B_; // Kontrol Matriksi
             MeasurementMatrix H_; // Ölçüm Matriksi
             StateMatrix Q_; // Süreç Gürültüsü (Process Noise) Matrixi
             MeasurementCovarianceMatrix R_; // Ölçüm Gürültüsü (Measurement Noise) Matrixi
-
-            StateMatrix I_; // Birim (Idenity) Matrix
+            bool has_model_ = false;
 
     }; // class KalmanFilter
 
 
-} // namespace kfl 
+} // namespace kfl
