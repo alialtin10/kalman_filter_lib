@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev libgtest-dev ninja-build clang
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then export CXX=clang++; else export CXX=g++; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_FLAGS="-Werror"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run examples
+        run: |
+          mkdir -p build/results
+          for e in 1d_robot_tracking altitude_estimation 2d_differential_kinematics; do
+            ./build/examples/example_$e build/results/$e.csv
+          done
